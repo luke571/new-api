@@ -268,6 +268,10 @@ func Register(c *gin.Context) {
 		return
 	}
 	if exist {
+		if model.InternalModeEnabled() {
+			common.ApiErrorT(c, "Invitation or registration request is invalid")
+			return
+		}
 		common.ApiErrorT(c, "Username already exists or has been deleted")
 		return
 	}
@@ -283,7 +287,17 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	var errInsert error
+	if model.InternalModeEnabled() {
+		errInsert = model.RegisterInternalUser(&cleanUser, user.RegistrationCode)
+	} else {
+		errInsert = cleanUser.Insert(inviterId)
+	}
+	if err := errInsert; err != nil {
+		if model.InternalModeEnabled() {
+			common.ApiErrorT(c, "Invitation or registration request is invalid")
+			return
+		}
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorT(c, "Email address is already in use")
 			return

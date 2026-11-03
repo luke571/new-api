@@ -44,3 +44,20 @@ relaykit/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
+
+# Private workstation credentials, runtime files, and personal notes.
+/1.md
+/.ssh/
+/secrets/
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+**/local-access.txt
+**/channel-key.env

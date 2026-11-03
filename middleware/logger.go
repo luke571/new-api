@@ -32,9 +32,15 @@ func SetUpLogger(server *gin.Engine) {
 				tag = "web"
 			}
 			path := param.Path
-			// OAuth callbacks carry one-time codes and state in the query string.
+			// OAuth and payment callbacks can carry credentials or customer data in the query string.
 			// Redact the log value only; the handler still needs the original query.
-			if strings.HasPrefix(path, "/api/oauth/") || strings.HasPrefix(path, "/oauth/") {
+			if strings.HasPrefix(path, "/api/oauth/") || strings.HasPrefix(path, "/oauth/") ||
+				strings.HasPrefix(param.Request.URL.Path, "/api/user/epay/") ||
+				strings.HasPrefix(param.Request.URL.Path, "/api/subscription/epay/") ||
+				strings.HasPrefix(param.Request.URL.Path, "/api/stripe/webhook") ||
+				strings.HasPrefix(param.Request.URL.Path, "/api/creem/webhook") ||
+				strings.HasPrefix(param.Request.URL.Path, "/api/waffo/webhook") ||
+				strings.HasPrefix(param.Request.URL.Path, "/api/waffo-pancake/webhook/") {
 				path, _, _ = strings.Cut(path, "?")
 			} else if param.Request.URL.RawQuery != "" {
 				query := param.Request.URL.Query().Encode()

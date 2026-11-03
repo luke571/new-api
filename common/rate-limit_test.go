@@ -148,3 +148,47 @@ func TestInMemoryRateLimiterConcurrentInitializationAndRequests(t *testing.T) {
 	assert.Len(t, limiter.store, 1)
 	assert.Equal(t, 10, limiter.store["client"].requests.length)
 }
+
+func TestInternalRequestLimitsReleaseAndWindow(t *testing.T) {
+	const userID = 987654321
+	now := time.Unix(1700000000, 0)
+	t.Cleanup(func() {
+		internalRequestLimits.Lock()
+		delete(internalRequestLimits.users, userID)
+		internalRequestLimits.Unlock()
+	})
+	release, err := acquireInternalRequestAt(userID, now)
+	require.NoError(t, err)
+	_, err = acquireInternalRequestAt(userID, now.Add(2*time.Minute))
+	require.Error(t, err, "an active stream must not expire with the rate window")
+	release()
+	release()
+	// Continue in the original window: rejected concurrent attempts were not admitted.
+	for range 39 {
+		done, e := acquireInternalRequestAt(userID, now)
+		require.NoError(t, e)
+		done()
+	}
+	_, err = acquireInternalRequestAt(userID, now)
+	require.Error(t, err)
+	done, err := acquireInternalRequestAt(userID, now.Add(time.Minute))
+	require.NoError(t, err)
+	done()
+}
+
+func TestInternalSharedUpstreamCapacity(t *testing.T) {
+	t.Setenv("INTERNAL_UPSTREAM_CONCURRENCY", "2")
+	now := time.Unix(1700000100, 0)
+	first, err := acquireInternalRequestAt(987654322, now)
+	require.NoError(t, err)
+	defer first()
+	second, err := acquireInternalRequestAt(987654323, now)
+	require.NoError(t, err)
+	defer second()
+	_, err = acquireInternalRequestAt(987654324, now)
+	require.Error(t, err)
+	first()
+	third, err := acquireInternalRequestAt(987654324, now)
+	require.NoError(t, err)
+	third()
+}

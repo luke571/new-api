@@ -502,7 +502,12 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, common.NewMessage("Purchase limit for this plan has been reached")
 		}
 	}
-	nowUnix := GetDBTimestamp()
+	if InternalModeEnabled() {
+		if err := CheckInternalSinglePlan(tx, userId); err != nil {
+			return nil, err
+		}
+	}
+	nowUnix := GetDBTimestamp(tx)
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {

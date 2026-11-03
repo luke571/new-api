@@ -28,6 +28,7 @@ import (
 // BillingSession 封装单次请求的预扣费/结算/退款生命周期。
 // 实现 relaycommon.BillingSettler 接口。
 type BillingSession struct {
+	internalRelease  func()
 	relayInfo        *relaycommon.RelayInfo
 	funding          FundingSource
 	preConsumedQuota int    // 实际预扣额度（信任用户可能为 0）
@@ -45,6 +46,9 @@ type BillingSession struct {
 // 资金来源和令牌额度分两步提交：若资金来源已提交但令牌调整失败，
 // 会标记 fundingSettled 防止 Refund 对已提交的资金来源执行退款。
 func (s *BillingSession) Settle(actualQuota int) error {
+	if s.internalRelease != nil {
+		defer s.internalRelease()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settled {
@@ -52,6 +56,11 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
+		if funding, ok := s.funding.(*InternalFunding); ok {
+			if err := funding.Settle(0); err != nil {
+				return err
+			}
+		}
 		s.settled = true
 		return nil
 	}
@@ -86,6 +95,9 @@ func (s *BillingSession) Settle(actualQuota int) error {
 
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
+	if s.internalRelease != nil {
+		defer s.internalRelease()
+	}
 	s.mu.Lock()
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
@@ -141,6 +153,9 @@ func (s *BillingSession) needsRefundLocked() bool {
 		return false
 	}
 	if s.tokenConsumed > 0 {
+		return true
+	}
+	if f, ok := s.funding.(*InternalFunding); ok && f.consumed > 0 {
 		return true
 	}
 	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
@@ -235,6 +250,9 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			}
 			s.tokenConsumed = 0
 		}
+		if _, ok := s.funding.(*InternalFunding); ok {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
 		// TODO: model 层应定义哨兵错误（如 ErrNoActiveSubscription），用 errors.Is 替代字符串匹配
 		if errors.Is(err, ErrInsufficientWalletQuota) {
 			userQuota, quotaErr := model.GetUserQuota(s.relayInfo.UserId, false)
@@ -263,6 +281,11 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 
 func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) error {
 	switch funding := s.funding.(type) {
+	case *InternalFunding:
+		if err := funding.reserve(delta); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		return nil
 	case *WalletFunding:
 		if requireAvailableQuota {
 			// Image quantities and task retry prices are known before
@@ -302,6 +325,10 @@ func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) e
 
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
+	case *InternalFunding:
+		if err := funding.reserve(-delta); err != nil {
+			common.SysError("internal funding rollback failed")
+		}
 	case *WalletFunding:
 		if err := model.IncreaseUserQuota(funding.userId, delta, false); err != nil {
 			common.SysLog(common.LogText("error rolling back wallet funding reserve: %s", err.Error()))
@@ -391,7 +418,26 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		return nil, types.NewError(fmt.Errorf("relayInfo is nil"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
+	internalMode := model.InternalModeEnabled()
+	if internalMode && model.InternalOpenAIModel(relayInfo.GetBillingModelName()) {
+		if !model.InternalCodexModel(relayInfo.GetBillingModelName()) {
+			return nil, types.NewErrorWithStatusCode(errors.New("model is not enabled for internal subscriptions"), types.ErrorCodeInvalidRequest, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		release, err := common.AcquireInternalRequest(relayInfo.UserId)
+		if err != nil {
+			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
+		}
+		session := &BillingSession{relayInfo: relayInfo, funding: &InternalFunding{requestID: relayInfo.RequestId, userID: relayInfo.UserId}, internalRelease: release, lang: i18n.StatedLang(c)}
+		if apiErr := session.preConsume(c, max(1, preConsumedQuota)); apiErr != nil {
+			release()
+			return nil, apiErr
+		}
+		return session, nil
+	}
 	pref := common.NormalizeBillingPreference(relayInfo.UserSetting.BillingPreference)
+	if internalMode {
+		pref = "wallet_only"
+	}
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {

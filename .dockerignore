@@ -10,3 +10,27 @@ docs
 /web/node_modules
 /web/dist
 !THIRD-PARTY-LICENSES.md
+# Keep local configuration, credentials, and runtime data out of image builds.
+.env
+.env.*
+!.env.example
+/data
+/logs
+/.local-tests
+/.review
+/.cache
+/.gomodcache
+/.gopath
+
+# Local notes, scratch workspaces, and private key material.
+/1.md
+/temp
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx

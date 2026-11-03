@@ -376,6 +376,7 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&InternalInvite{}, &InternalTeam{}, &InternalMember{}, &InternalAddon{}, &InternalCharge{},
 	)
 	if err != nil {
 		return err

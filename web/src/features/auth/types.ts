@@ -37,6 +37,7 @@ export interface TwoFAPayload {
 }
 
 export interface RegisterPayload {
+  registration_code?: string
   username: string
   password: string
   email?: string

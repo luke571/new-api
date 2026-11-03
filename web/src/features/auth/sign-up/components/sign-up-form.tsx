@@ -61,6 +61,7 @@ export function SignUpForm({
 }: React.HTMLAttributes<HTMLFormElement>) {
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
+  const [registrationCode, setRegistrationCode] = useState('')
   const [verificationCode, setVerificationCode] = useState('')
   const [agreedToLegal, setAgreedToLegal] = useState(false)
   const [wechatCode, setWeChatCode] = useState('')
@@ -157,12 +158,24 @@ export function SignUpForm({
       }
     }
 
+    if (
+      status?.internal_mode_enabled &&
+      (registrationCode.length !== 64 || data.password.length < 15)
+    ) {
+      toast.error(
+        t(
+          'A valid invitation and a password of at least 15 characters are required.'
+        )
+      )
+      return
+    }
     if (!validateTurnstile()) return
 
     setIsLoading(true)
     try {
       const res = await register({
         username: data.username,
+        registration_code: registrationCode || undefined,
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
@@ -251,6 +264,26 @@ export function SignUpForm({
         className={cn('grid gap-4', className)}
         {...props}
       >
+        {Boolean(status?.internal_mode_enabled) && (
+          <div className='grid gap-2'>
+            <Label htmlFor='registration-code'>
+              {t('Registration invitation')}
+            </Label>
+            <Input
+              id='registration-code'
+              autoComplete='off'
+              required
+              maxLength={64}
+              value={registrationCode}
+              onChange={(e) => setRegistrationCode(e.target.value)}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Ask your administrator for a single-use invitation. Use a password with at least 15 characters.'
+              )}
+            </p>
+          </div>
+        )}
         {/* Username Field */}
         <FormField
           control={form.control}

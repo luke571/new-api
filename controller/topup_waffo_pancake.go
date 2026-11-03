@@ -137,8 +137,8 @@ func SaveWaffoPancake(c *gin.Context) {
 		req.ProductID,
 	); err != nil {
 		logger.LogError(c.Request.Context(), common.LogText(
-			"Waffo Pancake failed to save config store_id=%q product_id=%q error=%q",
-			req.StoreID, req.ProductID, err.Error(),
+			"Waffo Pancake failed to save config store_id=%q product_id=%q error_type=%T",
+			req.StoreID, req.ProductID, err,
 		))
 		paymentError(c, common.NewMessage("Failed to save configuration"))
 		return
@@ -187,13 +187,13 @@ func CreateWaffoPancakePair(c *gin.Context) {
 	if err != nil {
 		orphan := result != nil && result.OrphanStore
 		logger.LogError(c.Request.Context(), common.LogText(
-			"Waffo Pancake failed to create store and product orphan_store=%t store_id=%q error=%q",
+			"Waffo Pancake failed to create store and product orphan_store=%t store_id=%q error_type=%T",
 			orphan, func() string {
 				if result == nil {
 					return ""
 				}
 				return result.StoreID
-			}(), err.Error(),
+			}(), err,
 		))
 		data := gin.H{"error": err.Error()}
 		if orphan {
@@ -231,7 +231,7 @@ func ListWaffoPancakeCatalog(c *gin.Context) {
 	catalog, err := service.ListWaffoPancakeCatalog(c.Request.Context(), merchantID, privateKey)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText(
-			"Waffo Pancake failed to fetch store and product catalog error=%q", err.Error(),
+			"Waffo Pancake failed to fetch store and product catalog error_type=%T", err,
 		))
 		paymentError(c, common.NewMessage("Failed to fetch the catalog"))
 		return
@@ -282,8 +282,8 @@ func CreateWaffoPancakeSubscriptionProduct(c *gin.Context) {
 	)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText(
-			"Waffo Pancake failed to create plan product store_id=%q name=%q amount=%q error=%q",
-			storeID, req.Name, req.Amount, err.Error(),
+			"Waffo Pancake failed to create plan product store_id=%q name=%q amount=%q error_type=%T",
+			storeID, req.Name, req.Amount, err,
 		))
 		paymentError(c, common.NewMessage("Failed to create the plan product"))
 		return
@@ -311,7 +311,7 @@ func ListWaffoPancakeSubscriptionProductOptions(c *gin.Context) {
 	catalog, err := service.ListWaffoPancakeCatalog(c.Request.Context(), merchantID, privateKey)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText(
-			"Waffo Pancake failed to fetch subscription product list store_id=%q error=%q", storeID, err.Error(),
+			"Waffo Pancake failed to fetch subscription product list store_id=%q error_type=%T", storeID, err,
 		))
 		paymentError(c, common.NewMessage("Failed to fetch the product list"))
 		return
@@ -389,7 +389,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		Status:          common.TopUpStatusPending,
 	}
 	if err := topUp.Insert(); err != nil {
-		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create top-up order user_id=%d trade_no=%s amount=%d error=%q", id, tradeNo, req.Amount, err.Error()))
+		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create top-up order user_id=%d trade_no=%s amount=%d error_type=%T", id, tradeNo, req.Amount, err))
 		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
@@ -407,7 +407,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		OrderMerchantExternalID: tradeNo,
 	})
 	if err != nil {
-		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create checkout session user_id=%d trade_no=%s error=%q", id, tradeNo, err.Error()))
+		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create checkout session user_id=%d trade_no=%s error_type=%T", id, tradeNo, err))
 		topUp.Status = common.TopUpStatusFailed
 		_ = topUp.Update()
 		paymentError(c, common.NewMessage("Failed to start payment"))
@@ -430,7 +430,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 
 func WaffoPancakeWebhook(c *gin.Context) {
 	if !isWaffoPancakeWebhookEnabled() {
-		logger.LogWarn(c.Request.Context(), common.LogText("Waffo Pancake webhook rejected reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
+		logger.LogWarn(c.Request.Context(), common.LogText("Waffo Pancake webhook rejected reason=webhook_disabled path=%q client_ip=%s", c.Request.URL.Path, c.ClientIP()))
 		c.String(http.StatusForbidden, "webhook disabled")
 		return
 	}
@@ -442,7 +442,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	if expectedEnv != "test" && expectedEnv != "prod" {
 		logger.LogWarn(c.Request.Context(), common.LogText(
 			"Waffo Pancake webhook invalid env path segment env=%q path=%q client_ip=%s",
-			expectedEnv, c.Request.RequestURI, c.ClientIP(),
+			expectedEnv, c.Request.URL.Path, c.ClientIP(),
 		))
 		c.String(http.StatusNotFound, "unknown env")
 		return
@@ -450,17 +450,17 @@ func WaffoPancakeWebhook(c *gin.Context) {
 
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake webhook failed to read request body path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
+		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake webhook failed to read request body path=%q client_ip=%s error_type=%T", c.Request.URL.Path, c.ClientIP(), err))
 		c.String(http.StatusBadRequest, "bad request")
 		return
 	}
 
 	signature := c.GetHeader("X-Waffo-Signature")
-	logger.LogInfo(c.Request.Context(), common.LogText("Waffo Pancake webhook received request path=%q client_ip=%s signature=%q body=%q", c.Request.RequestURI, c.ClientIP(), signature, string(bodyBytes)))
+	logger.LogInfo(c.Request.Context(), common.LogText("Waffo Pancake webhook received request path=%q client_ip=%s signature_present=%t body_bytes=%d", c.Request.URL.Path, c.ClientIP(), signature != "", len(string(bodyBytes))))
 
 	event, err := service.VerifyConfiguredWaffoPancakeWebhook(string(bodyBytes), signature)
 	if err != nil {
-		logger.LogWarn(c.Request.Context(), common.LogText("Waffo Pancake webhook signature verification failed path=%q client_ip=%s signature=%q body=%q error=%q", c.Request.RequestURI, c.ClientIP(), signature, string(bodyBytes), err.Error()))
+		logger.LogWarn(c.Request.Context(), common.LogText("Waffo Pancake webhook signature verification failed path=%q client_ip=%s signature_present=%t body_bytes=%d error_type=%T", c.Request.URL.Path, c.ClientIP(), signature != "", len(string(bodyBytes)), err))
 		c.String(http.StatusUnauthorized, "invalid signature")
 		return
 	}
@@ -489,8 +489,8 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		tradeNo, err := service.ResolveWaffoPancakeSubscriptionTradeNo(event)
 		if err != nil {
 			logger.LogError(c.Request.Context(), common.LogText(
-				"Waffo Pancake webhook failed to resolve subscription order event_id=%s order_id=%s buyer_identity=%q client_ip=%s error=%q",
-				event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, c.ClientIP(), err.Error(),
+				"Waffo Pancake webhook failed to resolve subscription order event_id=%s order_id=%s buyer_identity=%q client_ip=%s error_type=%T",
+				event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, c.ClientIP(), err,
 			))
 			c.String(http.StatusOK, "OK")
 			return
@@ -498,7 +498,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		LockOrder(tradeNo)
 		defer UnlockOrder(tradeNo)
 		if err := model.CompleteSubscriptionOrder(tradeNo, string(bodyBytes), model.PaymentProviderWaffoPancake, ""); err != nil {
-			logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake subscription completion failed trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
+			logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake subscription completion failed trade_no=%s event_id=%s order_id=%s client_ip=%s error_type=%T", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err))
 			c.String(http.StatusInternalServerError, "retry")
 			return
 		}
@@ -513,8 +513,8 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		// mismatch — both warrant human attention. 200 OK so Waffo doesn't
 		// retry a permanently-unresolvable webhook.
 		logger.LogError(c.Request.Context(), common.LogText(
-			"Waffo Pancake webhook failed to resolve order event_id=%s order_id=%s buyer_identity=%q client_ip=%s error=%q",
-			event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, c.ClientIP(), err.Error(),
+			"Waffo Pancake webhook failed to resolve order event_id=%s order_id=%s buyer_identity=%q client_ip=%s error_type=%T",
+			event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, c.ClientIP(), err,
 		))
 		c.String(http.StatusOK, "OK")
 		return
@@ -524,7 +524,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	defer UnlockOrder(tradeNo)
 
 	if err := model.RechargeWaffoPancake(tradeNo); err != nil {
-		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake top-up processing failed trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
+		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake top-up processing failed trade_no=%s event_id=%s order_id=%s client_ip=%s error_type=%T", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err))
 		c.String(http.StatusInternalServerError, "retry")
 		return
 	}

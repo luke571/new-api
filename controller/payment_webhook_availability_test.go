@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Calcium-Ion/go-epay/epay"
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -281,5 +283,49 @@ func TestEpayCallbacksVerifyBeforeSettlement(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestPaymentWebhookLogsExcludeSecrets(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	originalStripeKey, originalStripeSecret, originalStripePrice := setting.StripeApiSecret, setting.StripeWebhookSecret, setting.StripePriceId
+	originalCreemKey, originalCreemProducts, originalCreemSecret := setting.CreemApiKey, setting.CreemProducts, setting.CreemWebhookSecret
+	t.Cleanup(func() {
+		setting.StripeApiSecret, setting.StripeWebhookSecret, setting.StripePriceId = originalStripeKey, originalStripeSecret, originalStripePrice
+		setting.CreemApiKey, setting.CreemProducts, setting.CreemWebhookSecret = originalCreemKey, originalCreemProducts, originalCreemSecret
+	})
+	setting.StripeApiSecret, setting.StripeWebhookSecret, setting.StripePriceId = "sk_test", "whsec_test", "price_test"
+	setting.CreemApiKey, setting.CreemProducts, setting.CreemWebhookSecret = "creem_test", `[{"productId":"test"}]`, "creem_secret"
+	for _, tc := range []struct {
+		name, header string
+		handler      gin.HandlerFunc
+	}{
+		{"stripe", "Stripe-Signature", StripeWebhook},
+		{"creem", CreemSignatureHeader, CreemWebhook},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			common.LogWriterMu.Lock()
+			oldOut, oldErr := gin.DefaultWriter, gin.DefaultErrorWriter
+			gin.DefaultWriter, gin.DefaultErrorWriter = &logs, &logs
+			common.LogWriterMu.Unlock()
+			defer func() {
+				common.LogWriterMu.Lock()
+				gin.DefaultWriter, gin.DefaultErrorWriter = oldOut, oldErr
+				common.LogWriterMu.Unlock()
+			}()
+			sentinel := "private-buyer@example.invalid"
+			body := `{"customer":{"email":"` + sentinel + `"},"token":"private-token-sentinel"}`
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/webhook?signature=private-query-sentinel", strings.NewReader(body))
+			c.Request.Header.Set(tc.header, "private-signature-sentinel")
+			tc.handler(c)
+			assert.NotContains(t, logs.String(), sentinel)
+			assert.NotContains(t, logs.String(), "private-token-sentinel")
+			assert.NotContains(t, logs.String(), "private-signature-sentinel")
+			assert.NotContains(t, logs.String(), "private-query-sentinel")
+			assert.Contains(t, logs.String(), "body_bytes=")
+			assert.Contains(t, logs.String(), "signature verification failed")
+		})
 	}
 }

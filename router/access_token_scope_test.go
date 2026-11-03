@@ -35,6 +35,7 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/user/groups",
 
 	// Anonymous account entry points.
+	"POST /api/internal/reset-password",
 	"GET /api/verification",
 	"GET /api/reset_password",
 	"POST /api/user/reset",
